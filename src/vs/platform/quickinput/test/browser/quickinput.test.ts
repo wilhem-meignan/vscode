@@ -297,6 +297,19 @@ suite('QuickInput', () => { // https://github.com/microsoft/vscode/issues/147543
 		assert.strictEqual(repeatedDragHeight, singleDragHeight);
 	});
 
+	test('vertical resize reveals one standard row at a time', () => {
+		const quickpick = store.add(controller.createQuickPick());
+		quickpick.items = Array.from({ length: 50 }, (_, index) => ({ label: `item ${index}` }));
+		quickpick.show();
+		const list = fixture.querySelector<HTMLElement>('.quick-input-list .monaco-list')!;
+		const south = fixture.querySelector<HTMLElement>('.quick-input-resize-south')!;
+		const initialMaxHeight = parseFloat(list.style.maxHeight);
+
+		resize(south, 0, 22);
+
+		assert.strictEqual(parseFloat(list.style.maxHeight), initialMaxHeight + 22);
+	});
+
 	test('horizontal resize is symmetric and accumulates across drag gestures', () => {
 		const quickpick = store.add(controller.createQuickPick());
 		quickpick.show();

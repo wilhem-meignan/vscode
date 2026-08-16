@@ -1409,7 +1409,7 @@ export class QuickInputList extends Disposable {
 		this._tree.getHTMLElement().style.maxHeight = maxHeight !== undefined ? `${
 			// Make sure height aligns with list item heights, but preserve a
 			// single 22px row as the minimum useful quick-pick viewport.
-			Math.max(22, Math.floor(maxHeight / 44) * 44)
+			Math.max(22, Math.floor(maxHeight / 22) * 22)
 			// Add some extra height so that it's clear there's more to scroll.
 			+ 6
 			}px` : '';

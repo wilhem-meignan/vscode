@@ -197,8 +197,8 @@ export class QuickInputTreeController extends Disposable {
 
 	layout(maxHeight?: number): void {
 		this._tree.getHTMLElement().style.maxHeight = maxHeight ? `${
-			// Make sure height aligns with list item heights
-			Math.floor(maxHeight / 44) * 44
+			// Make sure height aligns with the 22px tree item height.
+			Math.floor(maxHeight / 22) * 22
 			// Add some extra height so that it's clear there's more to scroll
 			+ 6
 			}px` : '';
