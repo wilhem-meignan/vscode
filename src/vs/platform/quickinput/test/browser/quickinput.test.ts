@@ -9,7 +9,7 @@ import { unthemedInboxStyles } from '../../../../base/browser/ui/inputbox/inputB
 import { unthemedButtonStyles } from '../../../../base/browser/ui/button/button.js';
 import { unthemedListStyles } from '../../../../base/browser/ui/list/listWidget.js';
 import { unthemedToggleStyles } from '../../../../base/browser/ui/toggle/toggle.js';
-import { Event } from '../../../../base/common/event.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
 import { raceTimeout } from '../../../../base/common/async.js';
 import { unthemedCountStyles } from '../../../../base/browser/ui/countBadge/countBadge.js';
 import { unthemedKeybindingLabelOptions } from '../../../../base/browser/ui/keybindingLabel/keybindingLabel.js';
@@ -26,7 +26,7 @@ import { IThemeService } from '../../../theme/common/themeService.js';
 import { IConfigurationService } from '../../../configuration/common/configuration.js';
 import { TestConfigurationService } from '../../../configuration/test/common/testConfigurationService.js';
 import { ILayoutService } from '../../../layout/browser/layoutService.js';
-import { IContextViewService } from '../../../contextview/browser/contextView.js';
+import { IContextMenuService, IContextViewService } from '../../../contextview/browser/contextView.js';
 import { IListService, ListService } from '../../../list/browser/listService.js';
 import { IContextKeyService } from '../../../contextkey/common/contextkey.js';
 import { ContextKeyService } from '../../../contextkey/browser/contextKeyService.js';
@@ -35,6 +35,7 @@ import { IKeybindingService } from '../../../keybinding/common/keybinding.js';
 import { ContextViewService } from '../../../contextview/browser/contextViewService.js';
 import { IAccessibilityService } from '../../../accessibility/common/accessibility.js';
 import { TestAccessibilityService } from '../../../accessibility/test/common/testAccessibilityService.js';
+import { InMemoryStorageService, IStorageService, StorageScope, StorageTarget } from '../../../storage/common/storage.js';
 
 // Sets up an `onShow` listener to allow us to wait until the quick pick is shown (useful when triggering an `accept()` right after launching a quick pick)
 // kick this off before you launch the picker and then await the promise returned after you launch the picker.
@@ -55,13 +56,38 @@ suite('QuickInput', () => { // https://github.com/microsoft/vscode/issues/147543
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 	let controller: QuickInputController;
 	let fixture: HTMLElement;
+	let storageService: InMemoryStorageService;
+	let layoutEmitter: Emitter<{ readonly container: HTMLElement; readonly dimension: { readonly width: number; readonly height: number } }>;
+	let createController: () => QuickInputController;
+
+	function dispatchMouseEvent(target: EventTarget, type: string, x: number, y: number, detail = 1): void {
+		target.dispatchEvent(new mainWindow.MouseEvent(type, {
+			bubbles: true,
+			cancelable: true,
+			button: 0,
+			clientX: x,
+			clientY: y,
+			detail
+		}));
+	}
+
+	function resize(sash: HTMLElement, deltaX: number, deltaY: number): void {
+		dispatchMouseEvent(sash, 'mousedown', 0, 0);
+		dispatchMouseEvent(mainWindow, 'mousemove', deltaX, deltaY);
+		dispatchMouseEvent(mainWindow, 'mouseup', deltaX, deltaY);
+	}
 
 	setup(() => {
 		fixture = document.createElement('div');
+		fixture.style.position = 'relative';
+		fixture.style.width = '1000px';
+		fixture.style.height = '800px';
 		mainWindow.document.body.appendChild(fixture);
 		store.add(toDisposable(() => fixture.remove()));
 
 		const instantiationService = new TestInstantiationService();
+		layoutEmitter = store.add(new Emitter());
+		storageService = store.add(new InMemoryStorageService());
 
 		// Stub the services the quick input controller needs to function
 		instantiationService.stub(IThemeService, new TestThemeService());
@@ -71,8 +97,17 @@ suite('QuickInput', () => { // https://github.com/microsoft/vscode/issues/147543
 		instantiationService.stub(ILayoutService, {
 			_serviceBrand: undefined,
 			activeContainer: fixture,
-			onDidLayoutContainer: Event.None,
+			mainContainer: fixture,
+			activeContainerDimension: { width: 1000, height: 800 },
+			mainContainerDimension: { width: 1000, height: 800 },
+			activeContainerOffset: { top: 0, quickPickTop: 0 },
+			mainContainerOffset: { top: 0, quickPickTop: 0 },
+			onDidLayoutContainer: layoutEmitter.event,
 			getContainer: () => fixture,
+		});
+		instantiationService.stub(IStorageService, storageService);
+		instantiationService.stub(IContextMenuService, {
+			onDidShowContextMenu: Event.None
 		});
 		instantiationService.stub(IContextViewService, store.add(instantiationService.createInstance(ContextViewService)));
 		instantiationService.stub(IContextKeyService, store.add(instantiationService.createInstance(ContextKeyService)));
@@ -81,7 +116,7 @@ suite('QuickInput', () => { // https://github.com/microsoft/vscode/issues/147543
 			softDispatch() { return NoMatchingKb; },
 		});
 
-		controller = store.add(instantiationService.createInstance(
+		createController = () => store.add(instantiationService.createInstance(
 			QuickInputController,
 			{
 				container: fixture,
@@ -121,7 +156,8 @@ suite('QuickInput', () => { // https://github.com/microsoft/vscode/issues/147543
 		));
 
 		// initial layout
-		controller.layout({ height: 20, width: 40 }, 0);
+		controller = createController();
+		controller.layout({ height: 800, width: 1000 }, 0);
 	});
 
 	teardown(() => {
@@ -220,6 +256,202 @@ suite('QuickInput', () => { // https://github.com/microsoft/vscode/issues/147543
 				inert: false,
 			},
 		});
+	});
+
+	test('quick pick can be resized from the sides, bottom, and bottom corners', () => {
+		const quickpick = store.add(controller.createQuickPick());
+		quickpick.items = Array.from({ length: 30 }, (_, index) => ({ label: `item ${index}` }));
+		quickpick.show();
+
+		assert.strictEqual(fixture.querySelectorAll('.quick-input-resize-sash').length, 3);
+		assert.ok(fixture.querySelector('.quick-input-resize-west'));
+		assert.ok(fixture.querySelector('.quick-input-resize-east'));
+		const south = fixture.querySelector('.quick-input-resize-south')!;
+		assert.strictEqual(south.querySelectorAll('.orthogonal-drag-handle').length, 2);
+		assert.strictEqual(fixture.querySelector('.quick-input-resize-north'), null);
+	});
+
+	test('vertical resize accumulates deltas that are smaller than the row-height step', () => {
+		const quickpick = store.add(controller.createQuickPick());
+		quickpick.items = Array.from({ length: 50 }, (_, index) => ({ label: `item ${index}` }));
+		quickpick.show();
+		const south = fixture.querySelector<HTMLElement>('.quick-input-resize-south')!;
+
+		resize(south, 0, 10);
+		resize(south, 0, 10);
+		const repeatedDragHeight = JSON.parse(storageService.get(
+			'workbench.quickInput.viewState',
+			StorageScope.APPLICATION,
+			'{}'
+		)).height;
+
+		const header = fixture.querySelector('.quick-input-header')!;
+		dispatchMouseEvent(header, 'mousedown', 0, 0, 2);
+		dispatchMouseEvent(header, 'mouseup', 0, 0, 2);
+		resize(south, 0, 20);
+		const singleDragHeight = JSON.parse(storageService.get(
+			'workbench.quickInput.viewState',
+			StorageScope.APPLICATION,
+			'{}'
+		)).height;
+		assert.strictEqual(repeatedDragHeight, singleDragHeight);
+	});
+
+	test('horizontal resize is symmetric and accumulates across drag gestures', () => {
+		const quickpick = store.add(controller.createQuickPick());
+		quickpick.show();
+		const widget = fixture.querySelector<HTMLElement>('.quick-input-widget')!;
+		const east = fixture.querySelector<HTMLElement>('.quick-input-resize-east')!;
+
+		assert.deepStrictEqual({ width: widget.clientWidth, left: widget.offsetLeft }, { width: 600, left: 200 });
+
+		resize(east, 50, 0);
+		assert.deepStrictEqual({ width: widget.clientWidth, left: widget.offsetLeft }, { width: 700, left: 150 });
+
+		resize(east, 25, 0);
+		assert.deepStrictEqual({ width: widget.clientWidth, left: widget.offsetLeft }, { width: 750, left: 125 });
+	});
+
+	test('horizontal resize observes proportional limits and directional sash states', () => {
+		const quickpick = store.add(controller.createQuickPick());
+		quickpick.show();
+		const widget = fixture.querySelector<HTMLElement>('.quick-input-widget')!;
+		const west = fixture.querySelector<HTMLElement>('.quick-input-resize-west')!;
+		const east = fixture.querySelector<HTMLElement>('.quick-input-resize-east')!;
+
+		resize(east, 1000, 0);
+		assert.strictEqual(widget.clientWidth, 900);
+		assert.ok(west.classList.contains('minimum'));
+		assert.ok(east.classList.contains('maximum'));
+
+		resize(east, -1000, 0);
+		assert.strictEqual(widget.clientWidth, 200);
+		assert.ok(west.classList.contains('maximum'));
+		assert.ok(east.classList.contains('minimum'));
+	});
+
+	test('vertical and corner resize use the total pointer delta', () => {
+		const quickpick = store.add(controller.createQuickPick());
+		quickpick.items = Array.from({ length: 50 }, (_, index) => ({ label: `item ${index}` }));
+		quickpick.show();
+		const widget = fixture.querySelector<HTMLElement>('.quick-input-widget')!;
+		const list = fixture.querySelector<HTMLElement>('.quick-input-list .monaco-list')!;
+		const south = fixture.querySelector<HTMLElement>('.quick-input-resize-south')!;
+		const corner = south.querySelector<HTMLElement>('.orthogonal-drag-handle.end')!;
+		const initial = { width: widget.clientWidth, listHeight: list.clientHeight };
+
+		resize(south, 0, 80);
+		assert.ok(list.clientHeight > initial.listHeight);
+		assert.strictEqual(widget.clientWidth, initial.width);
+
+		const beforeCorner = { width: widget.clientWidth, listHeight: list.clientHeight };
+		resize(corner, 40, 40);
+		assert.strictEqual(widget.clientWidth, beforeCorner.width + 80);
+		assert.ok(list.clientHeight > beforeCorner.listHeight);
+		assert.ok(widget.clientHeight <= 720);
+	});
+
+	test('vertical resize is capped by filtered content and keeps one row visible', () => {
+		const quickpick = store.add(controller.createQuickPick());
+		quickpick.items = Array.from({ length: 50 }, (_, index) => ({ label: `item ${index}` }));
+		quickpick.show();
+		const list = fixture.querySelector<HTMLElement>('.quick-input-list .monaco-list')!;
+		const south = fixture.querySelector<HTMLElement>('.quick-input-resize-south')!;
+
+		resize(south, 0, 80);
+		const requestedHeight = JSON.parse(storageService.get('workbench.quickInput.viewState', StorageScope.APPLICATION, '{}')).height;
+		quickpick.value = 'item 49';
+		assert.ok(south.classList.contains('disabled'));
+
+		assert.strictEqual(list.style.maxHeight, '28px');
+		assert.ok(list.clientHeight >= 22 && list.clientHeight <= 29);
+		assert.strictEqual(south.querySelector('.orthogonal-drag-handle'), null);
+		assert.strictEqual(JSON.parse(storageService.get('workbench.quickInput.viewState', StorageScope.APPLICATION, '{}')).height, requestedHeight);
+
+		quickpick.value = '';
+		assert.ok(list.clientHeight > 28);
+	});
+
+	test('resize state persists without a custom position and header double click resets it', () => {
+		const quickpick = store.add(controller.createQuickPick());
+		quickpick.items = Array.from({ length: 50 }, (_, index) => ({ label: `item ${index}` }));
+		quickpick.show();
+		const widget = fixture.querySelector<HTMLElement>('.quick-input-widget')!;
+		const east = fixture.querySelector<HTMLElement>('.quick-input-resize-east')!;
+		const south = fixture.querySelector<HTMLElement>('.quick-input-resize-south')!;
+
+		resize(east, 50, 0);
+		resize(south, 0, 80);
+
+		const state = JSON.parse(storageService.get('workbench.quickInput.viewState', StorageScope.APPLICATION, '{}'));
+		assert.strictEqual(state.width, 700);
+		assert.ok(state.height > 320);
+		assert.strictEqual(state.top, undefined);
+		assert.strictEqual(state.left, undefined);
+
+		const header = fixture.querySelector('.quick-input-header')!;
+		dispatchMouseEvent(header, 'mousedown', 0, 0, 2);
+		dispatchMouseEvent(header, 'mouseup', 0, 0, 2);
+		assert.strictEqual(widget.clientWidth, 600);
+		assert.strictEqual(storageService.get('workbench.quickInput.viewState', StorageScope.APPLICATION), undefined);
+	});
+
+	test('size-only state is restored without being cleared by position initialization', () => {
+		controller.dispose();
+		storageService.store(
+			'workbench.quickInput.viewState',
+			JSON.stringify({ width: 700, height: 400 }),
+			StorageScope.APPLICATION,
+			StorageTarget.MACHINE
+		);
+		controller = createController();
+		controller.layout({ height: 800, width: 1000 }, 0);
+
+		const quickpick = store.add(controller.createQuickPick());
+		quickpick.items = Array.from({ length: 50 }, (_, index) => ({ label: `item ${index}` }));
+		quickpick.show();
+		const widget = fixture.querySelector<HTMLElement>('.quick-input-widget')!;
+		const list = fixture.querySelector<HTMLElement>('.quick-input-list .monaco-list')!;
+
+		assert.deepStrictEqual({
+			width: widget.clientWidth,
+			left: widget.offsetLeft,
+			listMaxHeight: list.style.maxHeight
+		}, {
+			width: 700,
+			left: 150,
+			listMaxHeight: '402px'
+		});
+		assert.strictEqual(storageService.get('workbench.quickInput.viewState', StorageScope.APPLICATION), JSON.stringify({ width: 700, height: 400 }));
+	});
+
+	test('size and position stay reachable after the window shrinks', () => {
+		const quickpick = store.add(controller.createQuickPick());
+		quickpick.items = Array.from({ length: 50 }, (_, index) => ({ label: `item ${index}` }));
+		quickpick.show();
+		controller.setAlignment({ top: 0.8, left: 0.9 });
+		resize(fixture.querySelector<HTMLElement>('.quick-input-resize-east')!, 1000, 0);
+		resize(fixture.querySelector<HTMLElement>('.quick-input-resize-south')!, 0, 1000);
+		controller.layout({ width: 500, height: 400 }, 0);
+		layoutEmitter.fire({ container: fixture, dimension: { width: 500, height: 400 } });
+
+		const widget = fixture.querySelector<HTMLElement>('.quick-input-widget')!;
+		assert.ok(widget.offsetLeft >= 0);
+		assert.ok(widget.offsetTop >= 0);
+		assert.ok(widget.offsetLeft + widget.clientWidth <= 500);
+		assert.ok(widget.offsetTop + widget.clientHeight <= 400);
+	});
+
+	test('anchored quick inputs cannot be resized', () => {
+		const anchor = document.createElement('div');
+		fixture.appendChild(anchor);
+		const quickpick = store.add(controller.createQuickPick());
+		quickpick.anchor = anchor;
+		quickpick.show();
+
+		for (const sash of fixture.querySelectorAll('.quick-input-resize-sash')) {
+			assert.ok(sash.classList.contains('disabled'));
+		}
 	});
 
 	test('pick - basecase', async () => {

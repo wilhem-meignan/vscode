@@ -1406,13 +1406,26 @@ export class QuickInputList extends Disposable {
 	}
 
 	layout(maxHeight?: number): void {
-		this._tree.getHTMLElement().style.maxHeight = maxHeight ? `${
-			// Make sure height aligns with list item heights
-			Math.floor(maxHeight / 44) * 44
-			// Add some extra height so that it's clear there's more to scroll
+		this._tree.getHTMLElement().style.maxHeight = maxHeight !== undefined ? `${
+			// Make sure height aligns with list item heights, but preserve a
+			// single 22px row as the minimum useful quick-pick viewport.
+			Math.max(22, Math.floor(maxHeight / 44) * 44)
+			// Add some extra height so that it's clear there's more to scroll.
 			+ 6
 			}px` : '';
 		this._tree.layout();
+	}
+
+	get contentHeight(): number {
+		return this._tree.contentHeight;
+	}
+
+	get height(): number {
+		return this._tree.getHTMLElement().clientHeight;
+	}
+
+	get onDidChangeContentHeight(): Event<number> {
+		return this._tree.onDidChangeContentHeight;
 	}
 
 	filter(query: string): boolean {
