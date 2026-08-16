@@ -979,7 +979,7 @@ export class QuickInputController extends Disposable {
 			let width = Math.max(minWidth, Math.min(maxWidth, this.viewState?.width ?? defaultWidth));
 			style.width = width + 'px';
 
-			let listHeight = this.dimension && this.dimension.height * 0.4;
+			let listHeight = this.dimension!.height * 0.4;
 			let maxListHeight = 0;
 			let overlayAnchor: IRect | undefined;
 
