@@ -1248,7 +1248,7 @@ class QuickInputResizeController extends Disposable {
 		readonly maxHeight: number;
 	} | undefined;
 
-	constructor(private readonly container: HTMLElement) {
+	constructor(container: HTMLElement) {
 		super();
 
 		this.westSash = this._register(new Sash(container, {
