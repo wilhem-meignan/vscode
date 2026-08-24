@@ -40,7 +40,8 @@ import { QuickInputTreeController } from './tree/quickInputTreeController.js';
 import { QuickTree } from './tree/quickTree.js';
 import { AnchorAlignment, AnchorPosition, IRect, layout2d } from '../../../base/common/layout.js';
 import { getAnchorRect, IAnchor } from '../../../base/browser/ui/contextview/contextview.js';
-import { ISashEvent, Orientation, OrthogonalEdge, Sash, SashState } from '../../../base/browser/ui/sash/sash.js';
+import { quickInputDefaultHeightRatio, quickInputMaximumDimensionRatio, quickInputMinimumWidthRatio, quickInputResizeHeightStep, quickInputScrollHintHeight } from './quickInputLayout.js';
+import { QuickInputResizeController } from './quickInputResizeController.js';
 
 const $ = dom.$;
 
@@ -48,17 +49,13 @@ const VIEWSTATE_STORAGE_KEY = 'workbench.quickInput.viewState';
 const QUICK_INPUT_MOTION_CLOSING_CLASS = 'quick-input-widget-closing';
 const QUICK_INPUT_OVERLAY_CLASS = 'quick-input-widget-overlay';
 const QUICK_INPUT_CLOSE_ANIMATION_DURATION = 150;
-const QUICK_INPUT_MOTION_ANCESTOR_CLASSES = ['style-override', 'monaco-enable-motion'];
+const QUICK_INPUT_MOTION_ANCESTOR_CLASSES = ['modern-ui', 'monaco-enable-motion'];
 
 type QuickInputViewState = {
 	readonly top?: number;
 	readonly left?: number;
 	readonly width?: number;
 	readonly height?: number;
-};
-
-type QuickInputResizeState = Pick<QuickInputViewState, 'width' | 'height'> & {
-	readonly done: boolean;
 };
 
 type QuickInputOverlayLayoutCorrection = {
@@ -974,12 +971,12 @@ export class QuickInputController extends Disposable {
 		if (this.ui && this.isVisible()) {
 			const style = this.ui.container.style;
 			const defaultWidth = Math.min(this.dimension!.width * 0.62 /* golden cut */, QuickInputController.MAX_WIDTH);
-			const minWidth = Math.min(defaultWidth / 3, this.dimension!.width * QUICK_INPUT_MAX_DIMENSION_RATIO);
-			const maxWidth = this.dimension!.width * QUICK_INPUT_MAX_DIMENSION_RATIO;
+			const minWidth = Math.min(defaultWidth * quickInputMinimumWidthRatio, this.dimension!.width * quickInputMaximumDimensionRatio);
+			const maxWidth = this.dimension!.width * quickInputMaximumDimensionRatio;
 			let width = Math.max(minWidth, Math.min(maxWidth, this.viewState?.width ?? defaultWidth));
 			style.width = width + 'px';
 
-			let listHeight = this.dimension!.height * 0.4;
+			let listHeight = this.dimension!.height * quickInputDefaultHeightRatio;
 			let maxListHeight = 0;
 			let overlayAnchor: IRect | undefined;
 
@@ -1052,8 +1049,8 @@ export class QuickInputController extends Disposable {
 					? this.ui.list.height
 					: this.ui.tree.displayed ? this.ui.tree.tree.getHTMLElement().clientHeight : 0;
 				const chromeHeight = this.ui.container.clientHeight - renderedListHeight;
-				maxListHeight = Math.max(0, Math.min(contentHeight, this.dimension!.height * QUICK_INPUT_MAX_DIMENSION_RATIO - chromeHeight - 6));
-				const minListHeight = Math.min(QUICK_INPUT_MIN_HEIGHT, maxListHeight);
+				maxListHeight = Math.max(0, Math.min(contentHeight, this.dimension!.height * quickInputMaximumDimensionRatio - chromeHeight - quickInputScrollHintHeight));
+				const minListHeight = Math.min(quickInputResizeHeightStep, maxListHeight);
 				listHeight = Math.max(minListHeight, Math.min(maxListHeight, this.viewState?.height ?? listHeight));
 			}
 
@@ -1074,10 +1071,10 @@ export class QuickInputController extends Disposable {
 			this.resizeController?.layout({
 				width,
 				height: listHeight,
-				requestedHeight: this.viewState?.height ?? (this.dimension!.height * 0.4),
+				requestedHeight: this.viewState?.height ?? (this.dimension!.height * quickInputDefaultHeightRatio),
 				minWidth,
 				maxWidth,
-				minHeight: Math.min(QUICK_INPUT_MIN_HEIGHT, maxListHeight),
+				minHeight: Math.min(quickInputResizeHeightStep, maxListHeight),
 				maxHeight: maxListHeight
 			});
 		}
@@ -1214,148 +1211,6 @@ export class QuickInputController extends Disposable {
 }
 
 export interface IQuickInputControllerHost extends ILayoutService { }
-
-type QuickInputResizeLayout = {
-	readonly width: number;
-	readonly height: number;
-	readonly requestedHeight: number;
-	readonly minWidth: number;
-	readonly maxWidth: number;
-	readonly minHeight: number;
-	readonly maxHeight: number;
-};
-
-class QuickInputResizeController extends Disposable {
-	readonly resizeState = observableValue<QuickInputResizeState | undefined>(this, undefined);
-
-	private readonly westSash: Sash;
-	private readonly eastSash: Sash;
-	private readonly southSash: Sash;
-	private enabled = true;
-	private currentLayout: QuickInputResizeLayout = {
-		width: 0,
-		height: 0,
-		requestedHeight: 0,
-		minWidth: 0,
-		maxWidth: 0,
-		minHeight: 0,
-		maxHeight: 0
-	};
-	private drag: {
-		readonly width: number;
-		readonly height: number;
-		readonly requestedHeight: number;
-		readonly maxHeight: number;
-	} | undefined;
-
-	constructor(container: HTMLElement) {
-		super();
-
-		this.westSash = this._register(new Sash(container, {
-			getVerticalSashLeft: () => 0,
-			getVerticalSashTop: () => 0,
-			getVerticalSashHeight: () => container.clientHeight
-		}, { orientation: Orientation.VERTICAL }));
-		this.eastSash = this._register(new Sash(container, {
-			getVerticalSashLeft: () => container.clientWidth,
-			getVerticalSashTop: () => 0,
-			getVerticalSashHeight: () => container.clientHeight
-		}, { orientation: Orientation.VERTICAL }));
-		this.southSash = this._register(new Sash(container, {
-			getHorizontalSashTop: () => container.clientHeight,
-			getHorizontalSashLeft: () => 0,
-			getHorizontalSashWidth: () => container.clientWidth
-		}, { orientation: Orientation.HORIZONTAL, orthogonalEdge: OrthogonalEdge.South }));
-		this.southSash.orthogonalStartSash = this.westSash;
-		this.southSash.orthogonalEndSash = this.eastSash;
-
-		this._register(this.westSash.addClass('quick-input-resize-sash'));
-		this._register(this.westSash.addClass('quick-input-resize-west'));
-		this._register(this.eastSash.addClass('quick-input-resize-sash'));
-		this._register(this.eastSash.addClass('quick-input-resize-east'));
-		this._register(this.southSash.addClass('quick-input-resize-sash'));
-		this._register(this.southSash.addClass('quick-input-resize-south'));
-
-		this._register(Event.any(this.westSash.onDidStart, this.eastSash.onDidStart, this.southSash.onDidStart)(() => {
-			if (!this.drag) {
-				this.drag = {
-					width: this.currentLayout.width,
-					height: Math.max(this.currentLayout.minHeight, Math.min(this.currentLayout.maxHeight, this.currentLayout.requestedHeight)),
-					requestedHeight: this.currentLayout.requestedHeight,
-					maxHeight: this.currentLayout.maxHeight
-				};
-			}
-		}));
-		this._register(Event.any(this.westSash.onDidEnd, this.eastSash.onDidEnd, this.southSash.onDidEnd)(() => {
-			if (this.drag) {
-				this.drag = undefined;
-				this.resizeState.set({ done: true }, undefined);
-			}
-		}));
-
-		this._register(this.westSash.onDidChange(event => this.resizeWidth(event, -1)));
-		this._register(this.eastSash.onDidChange(event => this.resizeWidth(event, 1)));
-		this._register(this.southSash.onDidChange(event => this.resizeHeight(event)));
-	}
-
-	setEnabled(enabled: boolean): void {
-		this.enabled = enabled;
-		this.updateSashStates();
-	}
-
-	layout(layout: QuickInputResizeLayout): void {
-		this.currentLayout = layout;
-		this.westSash.layout();
-		this.eastSash.layout();
-		this.southSash.layout();
-		this.updateSashStates();
-	}
-
-	private resizeWidth(event: ISashEvent, direction: -1 | 1): void {
-		if (!this.drag) {
-			return;
-		}
-
-		const delta = (event.currentX - event.startX) * direction * 2;
-		const width = Math.max(this.currentLayout.minWidth, Math.min(this.currentLayout.maxWidth, this.drag.width + delta));
-		this.resizeState.set({ width, done: false }, undefined);
-	}
-
-	private resizeHeight(event: ISashEvent): void {
-		if (!this.drag) {
-			return;
-		}
-
-		const delta = event.currentY - event.startY;
-		if (this.drag.requestedHeight > this.drag.maxHeight && delta >= 0) {
-			return;
-		}
-		const height = Math.max(this.currentLayout.minHeight, Math.min(this.currentLayout.maxHeight, this.drag.height + delta));
-		this.resizeState.set({ height, done: false }, undefined);
-	}
-
-	private updateSashStates(): void {
-		if (!this.enabled) {
-			this.westSash.state = SashState.Disabled;
-			this.eastSash.state = SashState.Disabled;
-			this.southSash.state = SashState.Disabled;
-			this.southSash.orthogonalStartSash = undefined;
-			this.southSash.orthogonalEndSash = undefined;
-			return;
-		}
-
-		this.westSash.state = this.currentLayout.width <= this.currentLayout.minWidth ? SashState.AtMaximum
-			: this.currentLayout.width >= this.currentLayout.maxWidth ? SashState.AtMinimum : SashState.Enabled;
-		this.eastSash.state = this.currentLayout.width <= this.currentLayout.minWidth ? SashState.AtMinimum
-			: this.currentLayout.width >= this.currentLayout.maxWidth ? SashState.AtMaximum : SashState.Enabled;
-		const southState = this.currentLayout.maxHeight <= this.currentLayout.minHeight ? SashState.Disabled
-			: this.currentLayout.height <= this.currentLayout.minHeight ? SashState.AtMinimum
-				: this.currentLayout.height >= this.currentLayout.maxHeight ? SashState.AtMaximum : SashState.Enabled;
-		this.southSash.state = southState;
-		this.southSash.orthogonalStartSash = southState === SashState.Disabled ? undefined : this.westSash;
-		this.southSash.orthogonalEndSash = southState === SashState.Disabled ? undefined : this.eastSash;
-	}
-}
 
 class QuickInputDragAndDropController extends Disposable {
 	readonly dndViewState = observableValue<{ top?: number; left?: number; done: boolean; reset?: boolean } | undefined>(this, undefined);

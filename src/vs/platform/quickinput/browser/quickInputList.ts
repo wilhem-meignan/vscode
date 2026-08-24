@@ -44,6 +44,7 @@ import { IThemeService } from '../../theme/common/themeService.js';
 import { asCssVariable } from '../../theme/common/colorUtils.js';
 import { IQuickPickItem, IQuickPickItemButtonEvent, IQuickPickSeparator, IQuickPickSeparatorButtonEvent, QuickPickFocus, QuickPickItem } from '../common/quickInput.js';
 import { IQuickInputStyles } from './quickInput.js';
+import { quickInputResizeHeightStep, quickInputScrollHintHeight } from './quickInputLayout.js';
 import { quickInputButtonsToActionArrays } from './quickInputUtils.js';
 
 const $ = dom.$;
@@ -1407,11 +1408,11 @@ export class QuickInputList extends Disposable {
 
 	layout(maxHeight?: number): void {
 		this._tree.getHTMLElement().style.maxHeight = maxHeight !== undefined ? `${
-			// Make sure height aligns with list item heights, but preserve a
-			// single 22px row as the minimum useful quick-pick viewport.
-			Math.max(22, Math.floor(maxHeight / 22) * 22)
+			// Snap to the standard quick-input row-height grid. Detailed items and
+			// separators have variable heights, so this may not end at an item boundary.
+			Math.max(quickInputResizeHeightStep, Math.floor(maxHeight / quickInputResizeHeightStep) * quickInputResizeHeightStep)
 			// Add some extra height so that it's clear there's more to scroll.
-			+ 6
+			+ quickInputScrollHintHeight
 			}px` : '';
 		this._tree.layout();
 	}

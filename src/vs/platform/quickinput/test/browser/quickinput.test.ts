@@ -36,6 +36,7 @@ import { ContextViewService } from '../../../contextview/browser/contextViewServ
 import { IAccessibilityService } from '../../../accessibility/common/accessibility.js';
 import { TestAccessibilityService } from '../../../accessibility/test/common/testAccessibilityService.js';
 import { InMemoryStorageService, IStorageService, StorageScope, StorageTarget } from '../../../storage/common/storage.js';
+import { quickInputMaximumDimensionRatio, quickInputResizeHeightStep, quickInputScrollHintHeight } from '../../browser/quickInputLayout.js';
 
 // Sets up an `onShow` listener to allow us to wait until the quick pick is shown (useful when triggering an `accept()` right after launching a quick pick)
 // kick this off before you launch the picker and then await the promise returned after you launch the picker.
@@ -75,6 +76,14 @@ suite('QuickInput', () => { // https://github.com/microsoft/vscode/issues/147543
 		dispatchMouseEvent(sash, 'mousedown', 0, 0);
 		dispatchMouseEvent(mainWindow, 'mousemove', deltaX, deltaY);
 		dispatchMouseEvent(mainWindow, 'mouseup', deltaX, deltaY);
+	}
+
+	function resizeHost(width: number, height: number): void {
+		fixture.style.width = `${width}px`;
+		fixture.style.height = `${height}px`;
+		const dimension = { width, height };
+		controller.layout(dimension, 0);
+		layoutEmitter.fire({ container: fixture, dimension });
 	}
 
 	setup(() => {
@@ -305,9 +314,41 @@ suite('QuickInput', () => { // https://github.com/microsoft/vscode/issues/147543
 		const south = fixture.querySelector<HTMLElement>('.quick-input-resize-south')!;
 		const initialMaxHeight = parseFloat(list.style.maxHeight);
 
-		resize(south, 0, 22);
+		resize(south, 0, quickInputResizeHeightStep);
 
-		assert.strictEqual(parseFloat(list.style.maxHeight), initialMaxHeight + 22);
+		assert.strictEqual(parseFloat(list.style.maxHeight), initialMaxHeight + quickInputResizeHeightStep);
+	});
+
+	test('vertical resize uses the standard row-height grid with variable-height items', () => {
+		const quickpick = store.add(controller.createQuickPick({ useSeparators: true }));
+		quickpick.items = [
+			{ label: 'standard item' },
+			{ label: 'detailed item', detail: 'detail' },
+			{ type: 'separator', label: 'section' },
+			...Array.from({ length: 50 }, (_, index) => ({ label: `item ${index}` }))
+		];
+		quickpick.show();
+		const list = fixture.querySelector<HTMLElement>('.quick-input-list .monaco-list')!;
+		const south = fixture.querySelector<HTMLElement>('.quick-input-resize-south')!;
+		const initialMaxHeight = parseFloat(list.style.maxHeight);
+
+		resize(south, 0, quickInputResizeHeightStep);
+
+		assert.strictEqual(parseFloat(list.style.maxHeight), initialMaxHeight + quickInputResizeHeightStep);
+		assert.strictEqual((parseFloat(list.style.maxHeight) - quickInputScrollHintHeight) % quickInputResizeHeightStep, 0);
+	});
+
+	test('vertical resize reveals one fixed-height tree row at a time', () => {
+		const quickTree = store.add(controller.createQuickTree());
+		quickTree.setItemTree(Array.from({ length: 50 }, (_, index) => ({ label: `item ${index}` })));
+		quickTree.show();
+		const tree = fixture.querySelector<HTMLElement>('.quick-input-tree .monaco-list')!;
+		const south = fixture.querySelector<HTMLElement>('.quick-input-resize-south')!;
+		const initialMaxHeight = parseFloat(tree.style.maxHeight);
+
+		resize(south, 0, quickInputResizeHeightStep);
+
+		assert.strictEqual(parseFloat(tree.style.maxHeight), initialMaxHeight + quickInputResizeHeightStep);
 	});
 
 	test('horizontal resize is symmetric and accumulates across drag gestures', () => {
@@ -438,21 +479,35 @@ suite('QuickInput', () => { // https://github.com/microsoft/vscode/issues/147543
 		assert.strictEqual(storageService.get('workbench.quickInput.viewState', StorageScope.APPLICATION), JSON.stringify({ width: 700, height: 400 }));
 	});
 
-	test('size and position stay reachable after the window shrinks', () => {
+	test('size and position respond to host window resizing', () => {
 		const quickpick = store.add(controller.createQuickPick());
 		quickpick.items = Array.from({ length: 50 }, (_, index) => ({ label: `item ${index}` }));
 		quickpick.show();
 		controller.setAlignment({ top: 0.8, left: 0.9 });
-		resize(fixture.querySelector<HTMLElement>('.quick-input-resize-east')!, 1000, 0);
-		resize(fixture.querySelector<HTMLElement>('.quick-input-resize-south')!, 0, 1000);
-		controller.layout({ width: 500, height: 400 }, 0);
-		layoutEmitter.fire({ container: fixture, dimension: { width: 500, height: 400 } });
+		resize(fixture.querySelector<HTMLElement>('.quick-input-resize-east')!, 100, 0);
+		resize(fixture.querySelector<HTMLElement>('.quick-input-resize-south')!, 0, 80);
 
 		const widget = fixture.querySelector<HTMLElement>('.quick-input-widget')!;
+		const list = fixture.querySelector<HTMLElement>('.quick-input-list .monaco-list')!;
+		const requestedSize = { width: widget.clientWidth, listHeight: list.clientHeight };
+
+		resizeHost(500, 800);
+		assert.strictEqual(widget.clientWidth, 500 * quickInputMaximumDimensionRatio);
+		assert.strictEqual(list.clientHeight, requestedSize.listHeight);
+
+		resizeHost(1000, 400);
+		assert.strictEqual(widget.clientWidth, requestedSize.width);
+		assert.ok(widget.clientHeight <= 400);
+
+		resizeHost(500, 400);
 		assert.ok(widget.offsetLeft >= 0);
 		assert.ok(widget.offsetTop >= 0);
 		assert.ok(widget.offsetLeft + widget.clientWidth <= 500);
 		assert.ok(widget.offsetTop + widget.clientHeight <= 400);
+
+		resizeHost(1000, 800);
+		assert.strictEqual(widget.clientWidth, requestedSize.width);
+		assert.strictEqual(list.clientHeight, requestedSize.listHeight);
 	});
 
 	test('anchored quick inputs cannot be resized', () => {

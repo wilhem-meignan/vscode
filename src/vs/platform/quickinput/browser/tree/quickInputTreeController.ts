@@ -21,6 +21,7 @@ import { QuickInputCheckboxStateHandler, QuickInputTreeRenderer } from './quickI
 import { QuickInputTreeSorter } from './quickInputTreeSorter.js';
 import { Checkbox } from '../../../../base/browser/ui/toggle/toggle.js';
 import { IQuickInputStyles } from '../quickInput.js';
+import { quickInputResizeHeightStep, quickInputScrollHintHeight } from '../quickInputLayout.js';
 
 const $ = dom.$;
 const flatHierarchyClass = 'quick-input-tree-flat';
@@ -197,10 +198,10 @@ export class QuickInputTreeController extends Disposable {
 
 	layout(maxHeight?: number): void {
 		this._tree.getHTMLElement().style.maxHeight = maxHeight ? `${
-			// Make sure height aligns with the 22px tree item height.
-			Math.floor(maxHeight / 22) * 22
-			// Add some extra height so that it's clear there's more to scroll
-			+ 6
+			// Align the viewport with the fixed tree item height.
+			Math.floor(maxHeight / quickInputResizeHeightStep) * quickInputResizeHeightStep
+			// Add some extra height so that it's clear there's more to scroll.
+			+ quickInputScrollHintHeight
 			}px` : '';
 		this._tree.layout();
 	}
